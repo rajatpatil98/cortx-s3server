@@ -368,20 +368,8 @@ class IAMController {
           requestAction.equals("GetTempAuthCredentials") ||
           requestAction.equals("UpdateAccountLoginProfile") ||
           requestAction.equals("DeleteAccount"))) {
-      try {
-        if (RootPermissionAuthorizer.getInstance().containsAction(
-                requestAction)) {
-          new IAMApiAuthorizer().authorizeRootUser(requestor, requestBody);
-        } else {
-          new IAMApiAuthorizer().authorize(requestor, requestBody);
-        }
-        LOGGER.info("Request is authorized for user: " + requestor.getName() +
-                    " account: " + requestor.getAccount());
-      }
-      catch (InvalidUserException e) {
-        LOGGER.error(e.getServerResponse().getResponseBody());
-        return e.getServerResponse();
-      }
+      // Authorize with IAM Policy
+      serverResponse = new Authorizer().authorize(requestor, requestBody);
     }
 
     return performAction(resourceMap, requestBody, requestor);

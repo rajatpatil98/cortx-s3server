@@ -26,7 +26,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.Map;
 import java.util.TreeMap;
-
+import java.util.Collections;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -41,7 +41,6 @@ import com.seagates3.acl.ACLValidation;
 import com.seagates3.authserver.AuthServerConfig;
 import com.seagates3.dao.ldap.AccountImpl;
 import com.seagates3.dao.ldap.LDAPUtils;
-import com.seagates3.dao.ldap.UserImpl;
 import com.seagates3.model.Account;
 import com.seagates3.model.Requestor;
 import com.seagates3.model.User;
@@ -49,12 +48,15 @@ import com.seagates3.policy.BucketPolicyAuthorizer;
 import com.seagates3.response.ServerResponse;
 import com.seagates3.response.generator.AuthorizationResponseGenerator;
 import com.seagates3.util.BinaryUtil;
+import com.seagates3.dao.ldap.PolicyImpl;
+import com.seagates3.policy.IAMPolicyAuthorizer;
 
 import io.netty.handler.codec.http.HttpResponseStatus;
 
 @RunWith(PowerMockRunner.class)
-    @PrepareForTest({LDAPUtils.class, ACLValidation.class,
-                     BucketPolicyAuthorizer.class})
+    @PrepareForTest({LDAPUtils.class,  ACLValidation.class,
+                     PolicyImpl.class, IAMPolicyAuthorizer.class,
+                     Authorizer.class, BucketPolicyAuthorizer.class})
     @PowerMockIgnore({"javax.management.*"}) public class AuthorizerTest {
 
  private
@@ -66,18 +68,16 @@ import io.netty.handler.codec.http.HttpResponseStatus;
  private
   AccountImpl mockAccountImpl;
  private
-  UserImpl mockUserImpl;
- private
   Authorizer authorizer;
   AuthorizationResponseGenerator responseGenerator =
       new AuthorizationResponseGenerator();
  private
   Account mockAccount;
- private
-  User user, iamUser1, iamUser2;
   static Account account = new Account();
   static Account secondaryAccount = new Account();
-
+  User iamUser2;
+ private
+  static User user2;
  private
   String serverResponseStringWithoutAcl =
       "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>" +
@@ -96,6 +96,11 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     account.setCanonicalId("qWwZGnGYTga8gbpcuY79SA");
     account.setId("12345");
     account.setName("testAccount");
+    user2 = new User();
+    user2.setId("456");
+    user2.setName("root");
+    user2.setPolicyIds(Collections.EMPTY_LIST);
+    user2.setAccountName("testAccount");
 
     secondaryAccount.setCanonicalId("ACDDDFfeffTga8gbpcuY79SA");
     secondaryAccount.setId("123456");
@@ -105,27 +110,26 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestor.setId("456");
     requestor.setName("tester");
     requestor.setAccount(account);
+    requestor.setUser(user2);
     AuthServerConfig.authResourceDir = "../resources";
   }
 
-  @Before public void setup() {
+  @Before public void setup() throws Exception {
     authorizer = new Authorizer();
     PowerMockito.mockStatic(LDAPUtils.class);
     PowerMockito.mockStatic(ACLValidation.class);
     mockAccountImpl = Mockito.mock(AccountImpl.class);
     mockAccount = Mockito.mock(Account.class);
-    mockUserImpl = Mockito.mock(UserImpl.class);
-    user = new User();
-    user.setName("root");
-
-    iamUser1 = new User();
     iamUser2 = new User();
-    iamUser1.setName("user1");
-    iamUser1.setAccountName("testAccount");
-    iamUser1.setId("userid1");
     iamUser2.setName("user2");
     iamUser2.setAccountName("testAccount");
     iamUser2.setId("userid2");
+    iamUser2.setPolicyIds(Collections.EMPTY_LIST);
+    PolicyImpl mockPolicyImpl = Mockito.mock(PolicyImpl.class);
+    PowerMockito.whenNew(PolicyImpl.class).withNoArguments().thenReturn(
+        mockPolicyImpl);
+    Mockito.when(mockPolicyImpl.findAll((Account)Mockito.any()))
+        .thenReturn(Collections.EMPTY_LIST);
   }
 
   @Test public void validateServerResponseWithRequestHeaderAsTrue() {
@@ -133,6 +137,7 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     ServerResponse actualServerResponse = null;
     requestBody = new TreeMap<>();
     requestBody.put(requestHeaderName, "true");
+    requestBody.put("S3Action", "dummyAction");
     actualServerResponse = authorizer.authorize(requestor, requestBody);
     assertEquals(HttpResponseStatus.OK,
                  actualServerResponse.getResponseStatus());
@@ -145,6 +150,7 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     ServerResponse actualServerResponse = null;
     requestBody = new TreeMap<>();
     requestBody.put(requestHeaderName, "false");
+    requestBody.put("S3Action", "dummyAction");
     actualServerResponse = authorizer.authorize(requestor, requestBody);
     assertEquals(HttpResponseStatus.OK,
                  actualServerResponse.getResponseStatus());
@@ -159,6 +165,7 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     ServerResponse actualServerResponse = null;
     requestBody = new TreeMap<>();
     requestBody.put(requestHeaderName, "true");
+    requestBody.put("S3Action", "dummyAction");
     actualServerResponse = authorizer.authorize(requestor, requestBody);
     assertEquals(HttpResponseStatus.OK,
                  actualServerResponse.getResponseStatus());
@@ -429,9 +436,6 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("S3Action", "PutBucketPolicy");
     PowerMockito.whenNew(AccountImpl.class).withNoArguments().thenReturn(
         mockAccountImpl);
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
-    Mockito.when(mockUserImpl.findByUserId("456")).thenReturn(user);
     Mockito.when(mockAccountImpl.findByCanonicalID("qWwZGnGYTga8gbpcuY79SA"))
         .thenReturn(mockAccount);
     Mockito.when(mockAccount.getName()).thenReturn("testAccount");
@@ -481,9 +485,6 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("Method", "PUT");
     requestBody.put("ClientAbsoluteUri", "/try1");
     requestBody.put("S3Action", "PutBucketPolicy");
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
-    Mockito.when(mockUserImpl.findByUserId("456")).thenReturn(user);
     Mockito.when(mockAccount.getName()).thenReturn("testAccount");
     actualServerResponse = authorizer.authorize(requestor, requestBody);
     assertEquals(HttpResponseStatus.OK,
@@ -530,9 +531,6 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("Method", "DELETE");
     requestBody.put("ClientAbsoluteUri", "/try1");
     requestBody.put("S3Action", "DeleteBucketPolicy");
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
-    Mockito.when(mockUserImpl.findByUserId("456")).thenReturn(user);
     Mockito.when(mockAccount.getName()).thenReturn("testAccount");
     actualServerResponse = authorizer.authorize(requestor, requestBody);
     assertEquals(HttpResponseStatus.OK,
@@ -579,9 +577,6 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("Method", "PUT");
     requestBody.put("ClientAbsoluteUri", "/try1");
     requestBody.put("S3Action", "PutBucketPolicy");
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
-    Mockito.when(mockUserImpl.findByUserId("456")).thenReturn(user);
     PowerMockito.whenNew(AccountImpl.class).withNoArguments().thenReturn(
         mockAccountImpl);
     Mockito.when(mockAccountImpl.findByCanonicalID("qWwZGnGYTga8gbpcuY79SA"))
@@ -635,9 +630,7 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("Method", "PUT");
     requestBody.put("ClientAbsoluteUri", "/try1");
     requestBody.put("S3Action", "PutBucketPolicy");
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
-    Mockito.when(mockUserImpl.findByUserId("456")).thenReturn(iamUser2);
+    requestor.setUser(iamUser2);
     requestor.getAccount().setId("userid2");
     PowerMockito.whenNew(AccountImpl.class).withNoArguments().thenReturn(
         mockAccountImpl);
@@ -649,6 +642,7 @@ import io.netty.handler.codec.http.HttpResponseStatus;
                  actualServerResponse.getResponseStatus());
 
     requestor.getAccount().setId("12345");
+    requestor.setUser(user2);
   }
 
   /**
@@ -661,6 +655,12 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestor2.setId("456");
     requestor2.setName("tester2");
     requestor2.setAccount(secondaryAccount);
+    User user3 = new User();
+    user3.setId("456");
+    user3.setName("root");
+    user3.setPolicyIds(Collections.EMPTY_LIST);
+    user3.setAccountName("testAccount2");
+    requestor2.setUser(user3);
     String policy = "{\r\n" + "  \"Id\": \"Policy1571741920713\",\r\n" +
                     "  \"Version\": \"2012-10-17\",\r\n" + "\r\n" +
                     "  \"Statement\": [\r\n" + "        {\r\n" +
@@ -696,9 +696,6 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("S3Action", "GetObjectAcl");
     PowerMockito.whenNew(AccountImpl.class).withNoArguments().thenReturn(
         mockAccountImpl);
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
-    Mockito.when(mockUserImpl.findByUserId("456")).thenReturn(user);
     Mockito.when(mockAccountImpl.findByCanonicalID("qWwZGnGYTga8gbpcuY79SA"))
         .thenReturn(mockAccount);
     Mockito.when(mockAccount.getName()).thenReturn("testAccount");
@@ -717,6 +714,12 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestor2.setId("456");
     requestor2.setName("tester2");
     requestor2.setAccount(secondaryAccount);
+    User user3 = new User();
+    user3.setId("456");
+    user3.setName("root");
+    user3.setPolicyIds(Collections.EMPTY_LIST);
+    user3.setAccountName("testAccount2");
+    requestor2.setUser(user3);
     String policy = "{\r\n" + "  \"Id\": \"Policy1571741920713\",\r\n" +
                     "  \"Version\": \"2012-10-17\",\r\n" + "\r\n" +
                     "  \"Statement\": [\r\n" + "        {\r\n" +
@@ -752,9 +755,6 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("S3Action", "PutObject");
     PowerMockito.whenNew(AccountImpl.class).withNoArguments().thenReturn(
         mockAccountImpl);
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
-    Mockito.when(mockUserImpl.findByUserId("456")).thenReturn(user);
     Mockito.when(mockAccountImpl.findByCanonicalID("qWwZGnGYTga8gbpcuY79SA"))
         .thenReturn(mockAccount);
     Mockito.when(mockAccount.getName()).thenReturn("testAccount");
@@ -776,6 +776,12 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestor2.setId("456");
     requestor2.setName("tester2");
     requestor2.setAccount(secondaryAccount);
+    User user3 = new User();
+    user3.setId("456");
+    user3.setName("root");
+    user3.setPolicyIds(Collections.EMPTY_LIST);
+    user3.setAccountName("testAccount2");
+    requestor2.setUser(user3);
     String policy = "{\r\n" + "  \"Id\": \"Policy1571741920713\",\r\n" +
                     "  \"Version\": \"2012-10-17\",\r\n" + "\r\n" +
                     "  \"Statement\": [\r\n" + "        {\r\n" +
@@ -811,9 +817,6 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("S3Action", "getObjectacl");
     PowerMockito.whenNew(AccountImpl.class).withNoArguments().thenReturn(
         mockAccountImpl);
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
-    Mockito.when(mockUserImpl.findByUserId("456")).thenReturn(user);
     Mockito.when(mockAccountImpl.findByCanonicalID("qWwZGnGYTga8gbpcuY79SA"))
         .thenReturn(mockAccount);
     Mockito.when(mockAccount.getName()).thenReturn("testAccount");
@@ -834,6 +837,12 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestor2.setId("456");
     requestor2.setName("tester2");
     requestor2.setAccount(secondaryAccount);
+    User user3 = new User();
+    user3.setId("456");
+    user3.setName("root");
+    user3.setPolicyIds(Collections.EMPTY_LIST);
+    user3.setAccountName("testAccount2");
+    requestor2.setUser(user3);
     String policy =
         "{\r\n" + "  \"Id\": \"Policy1571741920713\",\r\n" +
         "  \"Version\": \"2012-10-17\",\r\n" + "\r\n" +
@@ -874,9 +883,6 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("S3Action", "PutObjectAcl");
     PowerMockito.whenNew(AccountImpl.class).withNoArguments().thenReturn(
         mockAccountImpl);
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
-    Mockito.when(mockUserImpl.findByUserId("456")).thenReturn(user);
     Mockito.when(mockAccountImpl.findByCanonicalID("qWwZGnGYTga8gbpcuY79SA"))
         .thenReturn(mockAccount);
     Mockito.when(mockAccount.getName()).thenReturn("testAccount");
@@ -898,6 +904,12 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestor2.setId("456");
     requestor2.setName("tester2");
     requestor2.setAccount(secondaryAccount);
+    User user3 = new User();
+    user3.setId("456");
+    user3.setName("root");
+    user3.setPolicyIds(Collections.EMPTY_LIST);
+    user3.setAccountName("testAccount2");
+    requestor2.setUser(user3);
     String policy = "{\r\n" + "  \"Id\": \"Policy1571741920713\",\r\n" +
                     "  \"Version\": \"2012-10-17\",\r\n" + "\r\n" +
                     "  \"Statement\": [\r\n" + "        {\r\n" +
@@ -933,9 +945,6 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("S3Action", "GetObjectAcl");
     PowerMockito.whenNew(AccountImpl.class).withNoArguments().thenReturn(
         mockAccountImpl);
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
-    Mockito.when(mockUserImpl.findByUserId("456")).thenReturn(user);
     Mockito.when(mockAccountImpl.findByCanonicalID("qWwZGnGYTga8gbpcuY79SA"))
         .thenReturn(mockAccount);
     Mockito.when(mockAccount.getName()).thenReturn("testAccount");
@@ -956,6 +965,12 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestor2.setId("456");
     requestor2.setName("tester2");
     requestor2.setAccount(secondaryAccount);
+    User user3 = new User();
+    user3.setId("456");
+    user3.setName("root");
+    user3.setPolicyIds(Collections.EMPTY_LIST);
+    user3.setAccountName("testAccount2");
+    requestor2.setUser(user3);
     String policy = "{\r\n" + "  \"Id\": \"Policy1571741920713\",\r\n" +
                     "  \"Version\": \"2012-10-17\",\r\n" + "\r\n" +
                     "  \"Statement\": [\r\n" + "        {\r\n" +
@@ -990,13 +1005,8 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("Method", "PUT");
     requestBody.put("ClientAbsoluteUri", "/try1/a.txt");
     requestBody.put("S3Action", "PutObject");
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
-    Mockito.when(mockUserImpl.findByUserId("456")).thenReturn(user);
     PowerMockito.whenNew(AccountImpl.class).withNoArguments().thenReturn(
         mockAccountImpl);
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
     Mockito.when(mockAccountImpl.findByCanonicalID("qWwZGnGYTga8gbpcuY79SA"))
         .thenReturn(mockAccount);
     Mockito.when(mockAccount.getName()).thenReturn("testAccount");
@@ -1017,6 +1027,12 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestor2.setId("456");
     requestor2.setName("tester2");
     requestor2.setAccount(secondaryAccount);
+    User user3 = new User();
+    user3.setId("456");
+    user3.setName("root");
+    user3.setPolicyIds(Collections.EMPTY_LIST);
+    user3.setAccountName("testAccount2");
+    requestor2.setUser(user3);
     String policy = "{\r\n" + "  \"Id\": \"Policy1571741920713\",\r\n" +
                     "  \"Version\": \"2012-10-17\",\r\n" + "\r\n" +
                     "  \"Statement\": [\r\n" + "        {\r\n" +
@@ -1053,8 +1069,6 @@ import io.netty.handler.codec.http.HttpResponseStatus;
     requestBody.put("S3Action", "PutObject");
     PowerMockito.whenNew(AccountImpl.class).withNoArguments().thenReturn(
         mockAccountImpl);
-    PowerMockito.whenNew(UserImpl.class).withNoArguments().thenReturn(
-        mockUserImpl);
     Mockito.when(mockAccountImpl.findByCanonicalID("qWwZGnGYTga8gbpcuY79SA"))
         .thenReturn(mockAccount);
     Mockito.when(mockAccount.getName()).thenReturn("testAccount");

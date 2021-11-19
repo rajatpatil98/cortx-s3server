@@ -67,7 +67,8 @@ import com.seagates3.model.User;
                                       "createtimestamp", "arn"};
     private
      final String[] FIND_BYUSERID_ATTRS = {
-         "cn", "path", "arn", "rolename", "objectclass", "createtimestamp"};
+         "cn",          "path",            "arn",     "rolename",
+         "objectclass", "createtimestamp", "policyId"};
     private
      final int maxResults = 1000;
     private final String LDAP_DATE;
@@ -85,6 +86,8 @@ import com.seagates3.model.User;
     private final LDAPAttribute roleAttr;
     private
      final LDAPAttribute arn;
+    private
+     final LDAPAttribute policyids;
 
     @Rule
     public final ExpectedException exception = ExpectedException.none();
@@ -100,7 +103,7 @@ import com.seagates3.model.User;
         commonNameAttr = Mockito.mock(LDAPAttribute.class);
         roleAttr = Mockito.mock(LDAPAttribute.class);
         arn = Mockito.mock(LDAPAttribute.class);
-
+        policyids = Mockito.mock(LDAPAttribute.class);
         LDAP_DATE = "20160129160752Z";
         EXPECTED_DATE = "2016-01-29T16:07:52.000+0000";
     }
@@ -129,6 +132,7 @@ import com.seagates3.model.User;
         Mockito.when(entry.getAttribute("arn")).thenReturn(arn);
         Mockito.when(arn.getStringValue())
             .thenReturn("arn:aws:iam::accountid:user/s3test");
+        Mockito.when(entry.getAttribute("policyId")).thenReturn(policyids);
     }
 
     @Before
@@ -221,7 +225,7 @@ import com.seagates3.model.User;
         Mockito.when(objectClassAttr.getStringValue()).thenReturn("roleUser");
         Mockito.when(entry.getAttribute("rolename")).thenReturn(roleAttr);
         Mockito.when(roleAttr.getStringValue()).thenReturn("roleUserName");
-
+        Mockito.when(policyids.getStringValueArray()).thenReturn(new String[0]);
         String userBaseDN = "ou=users,o=s3test,ou=accounts,"
                 + "dc=s3,dc=seagate,dc=com";
         PowerMockito.doReturn(ldapResults).when(
@@ -286,7 +290,7 @@ import com.seagates3.model.User;
         expectedUser.setPath("/");
         expectedUser.setCreateDate(EXPECTED_DATE);
         expectedUser.setArn("arn:aws:iam::accountid:user/s3test");
-
+        expectedUser.setPolicyIds(new ArrayList<String>());
         String userBaseDN = "ou=users,o=s3test,ou=accounts,"
                 + "dc=s3,dc=seagate,dc=com";
 
@@ -295,7 +299,7 @@ import com.seagates3.model.User;
             .when(LDAPUtils.class, "search", userBaseDN, 2,
                   FIND_BYUSERID_FILTER, FIND_BYUSERID_ATTRS);
         Mockito.when(ldapResults.hasMore()).thenReturn(Boolean.TRUE);
-
+        Mockito.when(policyids.getStringValueArray()).thenReturn(new String[0]);
         User user = userImpl.findByUserId("s3test", "s3UserId");
         Assert.assertThat(expectedUser, new ReflectionEquals(user));
     }
@@ -310,12 +314,13 @@ import com.seagates3.model.User;
         expectedUser.setCreateDate(EXPECTED_DATE);
         expectedUser.setRoleName("roleUserName");
         expectedUser.setArn("arn:aws:iam::accountid:user/s3test");
+        expectedUser.setPolicyIds(new ArrayList<String>());
 
         setupUserAttr();
         Mockito.when(objectClassAttr.getStringValue()).thenReturn("roleUser");
         Mockito.when(entry.getAttribute("rolename")).thenReturn(roleAttr);
         Mockito.when(roleAttr.getStringValue()).thenReturn("roleUserName");
-
+        Mockito.when(policyids.getStringValueArray()).thenReturn(new String[0]);
         String userBaseDN = "ou=users,o=s3test,ou=accounts,"
                 + "dc=s3,dc=seagate,dc=com";
         PowerMockito.doReturn(ldapResults)

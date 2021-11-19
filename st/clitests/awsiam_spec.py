@@ -132,9 +132,17 @@ def policy_tests():
 
     os.environ["AWS_ACCESS_KEY_ID"] = testAcc2_access_key
     os.environ["AWS_SECRET_ACCESS_KEY"] = testAcc2_secret_key
+    S3ClientConfig.access_key_id = testAcc2_access_key
+    S3ClientConfig.secret_key = testAcc2_secret_key
 
     #delete-policy cross account
     AwsIamTest('Delete Policy Cross Account Not Allowed').delete_policy(arn2).execute_test(negative_case=True).command_should_fail()
+
+    #delete intermediate account
+    test_msg = "Delete account"
+    account_args = {}
+    account_args = {'AccountName': 'testAcc2'}
+    AuthTest(test_msg).delete_account(**account_args).execute_test().command_is_successful()
 
     del os.environ["AWS_ACCESS_KEY_ID"]
     del os.environ["AWS_SECRET_ACCESS_KEY"]
