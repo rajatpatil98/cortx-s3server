@@ -62,6 +62,7 @@ S3PutMultiObjectAction::S3PutMultiObjectAction(
   s3_put_action_state = S3PutPartActionState::empty;
   old_object_oid = {0ULL, 0ULL};
   old_layout_id = -1;
+  old_pvid_str = "";
   layout_id = -1;  // Will be set during create object
   new_object_oid = {0ULL, 0ULL};
 
@@ -290,6 +291,8 @@ void S3PutMultiObjectAction::fetch_part_info_success() {
     old_object_oid = part_metadata->get_oid();
     old_oid_str = S3M0Uint128Helper::to_string(old_object_oid);
     old_layout_id = part_metadata->get_layout_id();
+    old_pvid_str = part_metadata->get_pvid_str();
+    old_part_size = part_metadata->get_content_length();
     next();
   } else if (part_metadata->get_state() == S3PartMetadataState::missing) {
     s3_log(S3_LOG_DEBUG, request_id, "S3PartMetadataState::missing\n");
@@ -664,8 +667,8 @@ void S3PutMultiObjectAction::add_object_oid_to_probable_dead_oid_list() {
 
     // prepending a char depending on the size of the object (size based
     // bucketing of object)
-    S3CommonUtilities::size_based_bucketing_of_objects(
-        old_oid_str, part_metadata->get_content_length());
+    S3CommonUtilities::size_based_bucketing_of_objects(old_oid_str,
+                                                       old_part_size);
 
     // key = oldoid + "-" + newoid
     std::string old_oid_rec_key = old_oid_str + '-' + new_oid_str;
@@ -673,15 +676,14 @@ void S3PutMultiObjectAction::add_object_oid_to_probable_dead_oid_list() {
            "Adding old_probable_del_rec with key [%s]\n",
            old_oid_rec_key.c_str());
     old_probable_del_rec.reset(new S3ProbableDeleteRecord(
-        old_oid_rec_key, {0ULL, 0ULL},
-        object_multipart_metadata->get_object_name(), old_object_oid,
-        old_layout_id, object_multipart_metadata->get_pvid_str(),
-        bucket_metadata->get_multipart_index_layout().oid,
+        old_oid_rec_key, {0ULL, 0ULL}, request->get_object_name(),
+        old_object_oid, old_layout_id, old_pvid_str,
+        bucket_metadata->get_object_list_index_layout().oid,
         bucket_metadata->get_objects_version_list_index_layout().oid, "",
         false /* force_delete */, true,
-        part_metadata->get_part_index_layout().oid, 0,
+        part_metadata->get_part_index_layout().oid, 1,
         strtoul(part_metadata->get_part_number().c_str(), NULL, 0),
-        bucket_metadata->get_extended_metadata_index_layout().oid));
+        {0ULL, 0ULL}));
 
     probable_oid_list[old_oid_rec_key] = old_probable_del_rec->to_json();
   }
@@ -693,14 +695,14 @@ void S3PutMultiObjectAction::add_object_oid_to_probable_dead_oid_list() {
   s3_log(S3_LOG_DEBUG, request_id,
          "Adding new_probable_del_rec with key [%s]\n", new_oid_str.c_str());
   new_probable_del_rec.reset(new S3ProbableDeleteRecord(
-      new_oid_str, old_object_oid, object_multipart_metadata->get_object_name(),
-      new_object_oid, layout_id, object_multipart_metadata->get_pvid_str(),
-      bucket_metadata->get_multipart_index_layout().oid,
+      new_oid_str, old_object_oid, request->get_object_name(), new_object_oid,
+      layout_id, part_metadata->get_pvid_str(),
+      bucket_metadata->get_object_list_index_layout().oid,
       bucket_metadata->get_objects_version_list_index_layout().oid, "",
       false /* force_delete */, true,
       part_metadata->get_part_index_layout().oid, 1,
       strtoul(part_metadata->get_part_number().c_str(), NULL, 0),
-      bucket_metadata->get_extended_metadata_index_layout().oid));
+      {0ULL, 0ULL}));
   // store new oid, key = newoid
   probable_oid_list[new_oid_str] = new_probable_del_rec->to_json();
 
@@ -929,10 +931,45 @@ void S3PutMultiObjectAction::remove_new_oid_probable_record() {
     motr_kv_writer =
         motr_kv_writer_factory->create_motr_kvs_writer(request, s3_motr_api);
   }
-  motr_kv_writer->delete_keyval(global_probable_dead_object_list_index_layout,
-                                new_oid_str,
-                                std::bind(&S3PutMultiObjectAction::next, this),
-                                std::bind(&S3PutMultiObjectAction::next, this));
+  motr_kv_writer->delete_keyval(
+      global_probable_dead_object_list_index_layout, new_oid_str,
+      std::bind(&S3PutMultiObjectAction::add_oid_for_parallel_leak_check, this),
+      std::bind(&S3PutMultiObjectAction::add_oid_for_parallel_leak_check,
+                this));
+  s3_log(S3_LOG_DEBUG, "", "%s Exit", __func__);
+}
+
+void S3PutMultiObjectAction::add_oid_for_parallel_leak_check() {
+  s3_log(S3_LOG_DEBUG, stripped_request_id, "%s Entry\n", __func__);
+  std::map<std::string, std::string> oid_key_val_mp;
+  if (!motr_kv_writer) {
+    motr_kv_writer =
+        motr_kv_writer_factory->create_motr_kvs_writer(request, s3_motr_api);
+  }
+  std::string oid_str = S3M0Uint128Helper::to_string(part_metadata->get_oid());
+  // For parallel leak check, assume size as 0 (as it is dummy leak entry)
+  // This entry in probable delete list index helps S3 BD to process
+  // object leak caused due to parallel upload requests.
+  S3CommonUtilities::size_based_bucketing_of_objects(oid_str, 0);
+  std::unique_ptr<S3ProbableDeleteRecord> delete_rec;
+  s3_log(S3_LOG_DEBUG, request_id,
+         "Adding probable del rec for parallel leak check, with key [%s]\n",
+         oid_str.c_str());
+  delete_rec.reset(new S3ProbableDeleteRecord(
+      oid_str, old_object_oid, request->get_object_name(),
+      part_metadata->get_oid(), layout_id, part_metadata->get_pvid_str(),
+      bucket_metadata->get_object_list_index_layout().oid,
+      bucket_metadata->get_objects_version_list_index_layout().oid, "",
+      false /* force_delete */, true,
+      part_metadata->get_part_index_layout().oid, 1,
+      strtoul(part_metadata->get_part_number().c_str(), NULL, 0), {0ULL, 0ULL},
+      "", {0ULL, 0ULL}));
+
+  oid_key_val_mp[delete_rec->get_key()] = delete_rec->to_json();
+  motr_kv_writer->put_keyval(global_probable_dead_object_list_index_layout,
+                             oid_key_val_mp,
+                             std::bind(&S3PutMultiObjectAction::next, this),
+                             std::bind(&S3PutMultiObjectAction::next, this));
   s3_log(S3_LOG_DEBUG, "", "%s Exit", __func__);
 }
 
