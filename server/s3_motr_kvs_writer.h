@@ -167,9 +167,15 @@ class S3MotrKVSWriter {
   // void sync_keyval_successful();
   // void sync_keyval_failed();
 
+  enum callbackType {
+    STABLE,
+    EXECUTED
+  };
+
   virtual int put_keyval_impl(const std::map<std::string, std::string>& kv_list,
                               bool is_async, bool is_partial_write = false,
-                              int offset = 0, unsigned int how_many = 0);
+                              int offset = 0, unsigned int how_many = 0,
+                              enum callbackType = STABLE);
 
  public:
   S3MotrKVSWriter(std::shared_ptr<RequestObject> req,

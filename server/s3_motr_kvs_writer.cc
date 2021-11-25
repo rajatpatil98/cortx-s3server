@@ -517,7 +517,7 @@ void S3MotrKVSWriter::put_keyval(
   writer_context->init_kvs_write_op_ctx(kv_list.size());
 
   // Ret code can be ignored as its already handled in async case.
-  put_keyval_impl(kv_list, true, false, 0, 0);
+  put_keyval_impl(kv_list, true, false, 0, 0, STABLE);
 }
 
 void S3MotrKVSWriter::put_partial_keyval(
@@ -575,12 +575,13 @@ void S3MotrKVSWriter::put_partial_keyval(
   writer_context->init_kvs_write_op_ctx(how_many_being_processed);
 
   // Ret code can be ignored as its already handled in async case.
-  put_keyval_impl(kv_list, true, true, offset, how_many);
+  put_keyval_impl(kv_list, true, true, offset, how_many, STABLE);
 }
 
 int S3MotrKVSWriter::put_keyval_impl(
     const std::map<std::string, std::string> &kv_list, bool is_async,
-    bool put_keyval_partially, int offset, unsigned int how_many) {
+    bool put_keyval_partially, int offset, unsigned int how_many,
+    callbackType callback) {
 
   int rc = 0;
   struct s3_motr_idx_op_context *idx_op_ctx = NULL;

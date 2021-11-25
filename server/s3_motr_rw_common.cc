@@ -195,6 +195,53 @@ void s3_motr_op_stable(struct m0_op *op) {
   s3_log(S3_LOG_DEBUG, request_id, "%s Exit", __func__);
 }
 
+// Motr callbacks, run in motr thread
+void s3_motr_op_executed(struct m0_op *op) {
+  s3_log(S3_LOG_DEBUG, "", "%s Entry\n", __func__);
+  struct s3_motr_context_obj *ctx = (struct s3_motr_context_obj *)op->op_datum;
+
+  S3AsyncOpContextBase *app_ctx =
+      (S3AsyncOpContextBase *)ctx->application_context;
+  int motr_rc = app_ctx->get_motr_api()->motr_op_rc(op);
+  std::string request_id = app_ctx->get_request()->get_request_id();
+  std::string stripped_request_id =
+      app_ctx->get_request()->get_stripped_request_id();
+  s3_log(S3_LOG_DEBUG, request_id, "%s Entry\n", __func__);
+  s3_log(S3_LOG_DEBUG, request_id, "Return code = %d op_code = %u\n", motr_rc,
+         op->op_code);
+
+  s3_log(S3_LOG_DEBUG, request_id, "op_index_in_launch = %d\n",
+         ctx->op_index_in_launch);
+
+  app_ctx->set_op_errno_for(ctx->op_index_in_launch, motr_rc);
+
+  if (0 == motr_rc) {
+    app_ctx->set_op_status_for(ctx->op_index_in_launch,
+                               S3AsyncOpStatus::success, "Success.");
+  } else {
+    s3_log(S3_LOG_ERROR, request_id, "Error code = %d op_code = %u\n", motr_rc,
+           op->op_code);
+    app_ctx->set_op_status_for(ctx->op_index_in_launch, S3AsyncOpStatus::failed,
+                               "Operation Failed.");
+  }
+  free(ctx);
+  if (app_ctx->incr_response_count() == app_ctx->get_ops_count()) {
+    struct user_event_context *user_ctx = (struct user_event_context *)calloc(
+        1, sizeof(struct user_event_context));
+    user_ctx->app_ctx = app_ctx;
+    app_ctx->stop_timer();
+
+#ifdef S3_GOOGLE_TEST
+    evutil_socket_t test_sock = 0;
+    short events = 0;
+    motr_op_done_on_main_thread(test_sock, events, (void *)user_ctx);
+#else
+    S3PostToMainLoop((void *)user_ctx)(motr_op_done_on_main_thread, request_id);
+#endif  // S3_GOOGLE_TEST
+  }
+  s3_log(S3_LOG_DEBUG, request_id, "%s Exit", __func__);
+}
+
 void s3_motr_op_failed(struct m0_op *op) {
   struct s3_motr_context_obj *ctx = (struct s3_motr_context_obj *)op->op_datum;
 
