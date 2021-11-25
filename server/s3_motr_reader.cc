@@ -159,7 +159,13 @@ int S3MotrReader::open_object(std::function<void(void)> on_success,
   obj_ctx->objs[0].ob_entity.en_flags |= M0_ENF_META;
   if (S3Option::get_instance()->is_s3_write_di_check_enabled()) {
     obj_ctx->objs[0].ob_entity.en_flags |= M0_ENF_DI;
+    s3_log(S3_LOG_ERROR, request_id,
+            "rajat write enflag : %d", (int)obj_ctx->objs[0].ob_entity.en_flags);
   }
+  s3_log(S3_LOG_ERROR, request_id,
+            "rajat write else enflag : %d, s3flag : %d",
+            (int)obj_ctx->objs[0].ob_entity.en_flags,
+            (int)S3Option::get_instance()->is_s3_write_di_check_enabled());
   rc = s3_motr_api->motr_entity_open(&(obj_ctx->objs[0].ob_entity),
                                      &(ctx->ops[0]));
   if (rc != 0) {
